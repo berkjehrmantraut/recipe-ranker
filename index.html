@@ -113,29 +113,36 @@
 
   <script>
     // ====== CONFIG ======
-    const API_BASE = 'https://script.google.com/macros/s/AKfycbzHYjnsUhNN4HrlfvvUB8te9uyL2sC8WR8UDC_yRaqq_0KVInxvP9FnJ27O4BQHlBL9ig/exec'; // e.g. https://script.google.com/macros/s/AKfycb.../exec
-    const API_KEY = ''; // leave '' if you didn't set one
+    const API_BASE = 'https://script.google.com/macros/s/AKfycbzHYjnsUhNN4HrlfvvUB8te9uyL2sC8WR8UDC_yRaqq_0KVInxvP9FnJ27O4BQHlBL9ig/exec';
+    const API_KEY = ''; // if you set Script Property API_KEY, put it here (or leave '')
 
-    // Helpers
-    async function apiGET(pathParams) {
-      const url = `${API_BASE}?${new URLSearchParams(pathParams).toString()}${API_KEY ? `&key=${encodeURIComponent(API_KEY)}` : ''}`;
+    // ---------- API helpers (GET ok; POST uses form-encoding to avoid preflight) ----------
+    async function apiGET(params) {
+      const url = `${API_BASE}?${new URLSearchParams({
+        ...(params || {}),
+        ...(API_KEY ? { key: API_KEY } : {})
+      }).toString()}`;
       const res = await fetch(url, { method: 'GET' });
+      if (!res.ok) throw new Error(`Network error ${res.status}`);
       return res.json();
     }
+
     async function apiPOST(action, body) {
-      const url = `${API_BASE}?action=${encodeURIComponent(action)}${API_KEY ? `&key=${encodeURIComponent(API_KEY)}` : ''}`;
-      const res = await fetch(url, {
+      const qs = new URLSearchParams({ action, ...(API_KEY ? { key: API_KEY } : {}) });
+      const form = new URLSearchParams(body || {}); // form-encoded (no custom headers)
+      const res = await fetch(`${API_BASE}?${qs.toString()}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(API_KEY ? {'X-API-Key': API_KEY} : {}) },
-        body: JSON.stringify(body || {})
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: form.toString()
       });
+      if (!res.ok) throw new Error(`Network error ${res.status}`);
       return res.json();
     }
 
-    // UI State
-    let A=null, B=null;
+    // ---------- UI state ----------
+    let A = null, B = null;
 
-    // Render functions
+    // ---------- UI rendering ----------
     function renderCard(slot, r){
       document.getElementById(slot).innerHTML = `
         <h2 style="margin:0 0 8px;">${r.name}</h2>
@@ -147,70 +154,105 @@
       `;
     }
 
-    // Actions
+    // ---------- Actions ----------
     async function loadPair(){
-      document.getElementById('left').innerHTML = 'Loading…';
-      document.getElementById('right').innerHTML = '';
-      const json = await apiGET({ action:'pair' });
-      if (!json.ok) { alert(json.error || 'Error'); return; }
-      A = json.data.a; B = json.data.b;
-      renderCard('left', A); renderCard('right', B);
+      try {
+        document.getElementById('left').innerHTML = 'Loading…';
+        document.getElementById('right').innerHTML = '';
+        const json = await apiGET({ action:'pair' });
+        if (!json.ok) throw new Error(json.error || 'Error');
+        A = json.data.a; B = json.data.b;
+        renderCard('left', A); renderCard('right', B);
+      } catch (err) {
+        console.error(err);
+        document.getElementById('left').innerHTML = 'Failed to load pair.';
+      }
     }
+
     async function vote(winnerId){
       if (!A || !B) return;
-      const loserId = (A.id === winnerId) ? B.id : A.id;
-      const json = await apiPOST('vote', { winnerId, loserId });
-      if (!json.ok) { alert(json.error || 'Error'); return; }
-      loadPair();
+      try {
+        const loserId = (A.id === winnerId) ? B.id : A.id;
+        const json = await apiPOST('vote', { winnerId, loserId });
+        if (!json.ok) throw new Error(json.error || 'Error');
+        await loadPair();
+      } catch (err) {
+        console.error(err);
+        alert('Failed to submit vote. See console for details.');
+      }
     }
+
     async function cooked(id){
-      const json = await apiPOST('markcooked', { recipeId:id });
-      if (!json.ok) { alert(json.error || 'Error'); return; }
-      alert('Marked cooked!');
+      try {
+        const json = await apiPOST('markcooked', { recipeId:id });
+        if (!json.ok) throw new Error(json.error || 'Error');
+        alert('Marked cooked!');
+      } catch (err) {
+        console.error(err);
+        alert('Failed to mark cooked.');
+      }
     }
+
     async function loadRecs(){
       const recsDiv = document.getElementById('recs');
       recsDiv.innerHTML = 'Scoring…';
-      const json = await apiGET({ action:'recs', limit:10 });
-      if (!json.ok) { recsDiv.textContent = json.error || 'Error'; return; }
-      const html = ['<h2>Weekly Picks</h2><ol>'].concat(
-        json.data.map(r => `<li>${r.name} — score ${r.score} (Elo ${r.elo}, ~${r.time_min} min${r.last_made?`, last made: ${new Date(r.last_made).toLocaleDateString()}`:''})</li>`)
-      ).concat(['</ol>']).join('');
-      recsDiv.innerHTML = html;
+      try {
+        const json = await apiGET({ action:'recs', limit:10 });
+        if (!json.ok) throw new Error(json.error || 'Error');
+        const html = ['<h2>Weekly Picks</h2><ol>'].concat(
+          json.data.map(r => `<li>${r.name} — score ${r.score} (Elo ${r.elo}, ~${r.time_min} min${r.last_made?`, last made: ${new Date(r.last_made).toLocaleDateString()}`:''})</li>`)
+        ).concat(['</ol>']).join('');
+        recsDiv.innerHTML = html;
+      } catch (err) {
+        console.error(err);
+        recsDiv.textContent = 'Failed to load recommendations.';
+      }
     }
+
     async function refreshQuickMark(){
       const sel = document.getElementById('recipeSelect');
       sel.innerHTML = '<option>Loading…</option>';
-      const json = await apiGET({ action:'listrecipes' });
-      if (!json.ok) { sel.innerHTML = '<option>Error</option>'; return; }
-      sel.innerHTML = '';
-      for (const r of json.data) {
-        const opt = document.createElement('option');
-        opt.value = r.id;
-        const lm = r.last_made ? new Date(r.last_made).toLocaleDateString() : 'never';
-        opt.textContent = `${r.name} (avg ~${r.time_min ?? '?'} min, last: ${lm})`;
-        sel.appendChild(opt);
-      }
-      if (!json.data.length) {
-        const opt = document.createElement('option');
-        opt.textContent = 'No active recipes found';
-        opt.disabled = true;
-        sel.appendChild(opt);
+      try {
+        const json = await apiGET({ action:'listrecipes' });
+        if (!json.ok) throw new Error(json.error || 'Error');
+        sel.innerHTML = '';
+        for (const r of json.data) {
+          const opt = document.createElement('option');
+          opt.value = r.id;
+          const lm = r.last_made ? new Date(r.last_made).toLocaleDateString() : 'never';
+          opt.textContent = `${r.name} (avg ~${r.time_min ?? '?'} min, last: ${lm})`;
+          sel.appendChild(opt);
+        }
+        if (!json.data.length) {
+          const opt = document.createElement('option');
+          opt.textContent = 'No active recipes found';
+          opt.disabled = true;
+          sel.appendChild(opt);
+        }
+      } catch (err) {
+        console.error(err);
+        sel.innerHTML = '<option>Error loading recipes</option>';
       }
     }
+
     async function quickMarkCooked(){
       const id = document.getElementById('recipeSelect').value;
       const mins = document.getElementById('cookMinutes').value.trim();
       const msg = document.getElementById('quickMarkMsg');
       msg.textContent = 'Saving…';
-      const json = await apiPOST('markcooked', { recipeId:id, minutesOptional: mins });
-      if (!json.ok) { msg.textContent = json.error || 'Error'; return; }
-      msg.textContent = `Saved: ${json.data.name} marked cooked today${mins ? `; time set to ${json.data.time_min} min` : ''}.`;
-      document.getElementById('cookMinutes').value = '';
-      refreshQuickMark();
+      try {
+        const json = await apiPOST('markcooked', { recipeId:id, minutesOptional: mins });
+        if (!json.ok) throw new Error(json.error || 'Error');
+        msg.textContent = `Saved: ${json.data.name} marked cooked today${mins ? `; time set to ${json.data.time_min} min` : ''}.`;
+        document.getElementById('cookMinutes').value = '';
+        refreshQuickMark();
+      } catch (err) {
+        console.error(err);
+        msg.textContent = 'Failed to save.';
+      }
     }
 
-    // Wire buttons
+    // ---------- Wire buttons & initial loads ----------
     const $ = (id) => document.getElementById(id);
     window.addEventListener('DOMContentLoaded', () => {
       $('pairBtn').onclick = loadPair;
