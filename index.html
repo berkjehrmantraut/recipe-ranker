@@ -33,9 +33,13 @@
     button {
       font-size:1rem; padding:12px 14px; border-radius:12px;
       border:1px solid #d0d0d0; background:#fff; cursor:pointer; min-height:48px;
+      transition: opacity .15s ease;
     }
     button:hover{ background:#f6f6f6; } button:active{ transform:translateY(1px); }
     button.muted{ color:#444; border-color:#e4e4e4; background:#fbfbfb; }
+    button[disabled]{
+      opacity:.6; cursor:not-allowed; pointer-events:auto; /* keep focus styles but block action */
+    }
     input[type="number"], select{
       font-size:1rem; padding:12px; border:1px solid #d0d0d0; border-radius:10px; min-height:48px; width:100%;
     }
@@ -45,7 +49,7 @@
     @media (max-width:719.98px){ .actions{ display:none; } }
     .sticky-actions{
       position:fixed; left:0; right:0; bottom:0; height:var(--sticky-h);
-      padding:10px clamp(12px,4vw,28px); padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));
+      padding:10px clamp(12px, 4vw, 28px); padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));
       background:rgba(255,255,255,0.94); backdrop-filter:blur(10px); border-top:1px solid #e6e6e6;
       display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;
     }
@@ -127,6 +131,30 @@
       el.textContent = text;
     }
 
+    // Small helpers to toggle loading on buttons (Option A)
+    function setLoading(btn, labelWhenLoading='Saving…'){
+      if (!btn) return () => {};
+      const original = btn.textContent;
+      btn.textContent = labelWhenLoading;
+      btn.disabled = true;
+      btn.setAttribute('aria-busy','true');
+      return () => {
+        btn.disabled = false;
+        btn.removeAttribute('aria-busy');
+        btn.textContent = original;
+      };
+    }
+    function disableGroupButtons(selector, exceptBtn){
+      const buttons = document.querySelectorAll(selector);
+      buttons.forEach(b => {
+        b.disabled = true;
+        if (b === exceptBtn) b.setAttribute('aria-busy','true');
+      });
+      return () => {
+        buttons.forEach(b => { b.disabled = false; b.removeAttribute('aria-busy'); });
+      };
+    }
+
     // ---------- API helpers ----------
     async function apiGET(params) {
       const url = `${API_BASE}?${new URLSearchParams({
@@ -173,9 +201,7 @@
       });
       const txt2 = await res2.text();
       const j2 = safeParse(txt2);
-      if (!res2.ok || !j2) {
-        throw new Error(`text/plain POST failed (${res2.status}): ${txt2.slice(0,300)}`);
-      }
+      if (!res2.ok || !j2) throw new Error(`text/plain POST failed (${res2.status}): ${txt2.slice(0,300)}`);
       return j2;
 
       function safeParse(s){ try { return JSON.parse(s); } catch { return null; } }
@@ -184,15 +210,18 @@
     // ---------- UI state ----------
     let A = null, B = null;
 
-    // ---------- UI rendering (Mark Cooked removed from duel cards) ----------
+    // ---------- UI rendering (no 'Mark cooked' on duel cards) ----------
     function renderCard(slot, r){
       document.getElementById(slot).innerHTML = `
         <h2 style="margin:0 0 8px;">${r.name}</h2>
         <div class="muted">Elo: ${r.elo} • Matches: ${r.matches} • ~${r.time_min||'?'} min</div>
         <div class="row" style="margin-top:12px;">
-          <button onclick="vote('${r.id}')">Pick this</button>
+          <button class="vote-btn" data-id="${r.id}">Pick this</button>
         </div>
       `;
+      // Attach click with loading behavior
+      const btn = document.querySelector(`#${slot} .vote-btn`);
+      btn.onclick = () => vote(r.id, btn);
     }
 
     // ---------- Actions ----------
@@ -209,9 +238,12 @@
       renderCard('left', A); renderCard('right', B);
     }
 
-    async function vote(winnerId){
+    async function vote(winnerId, clickedBtn){
       if (!A || !B) return;
       const loserId = (A.id === winnerId) ? B.id : A.id;
+      // Disable both duel buttons; show loading on the clicked one
+      const restoreGroup = disableGroupButtons('#duel .row button', clickedBtn);
+      const restoreOne = setLoading(clickedBtn, 'Submitting…');
       try {
         const resp = await apiPOST('vote', { winnerId, loserId });
         if (!resp.ok) throw new Error(resp.error || 'Unknown API error');
@@ -219,6 +251,8 @@
       } catch (err) {
         alert('Failed to submit vote.');
         showDebug('POST /vote error', String(err));
+        restoreGroup();
+        restoreOne();
       }
     }
 
@@ -240,28 +274,26 @@
     async function refreshQuickMark(){
       const sel = $('recipeSelect');
       sel.innerHTML = '<option>Loading…</option>';
-      const { json, raw, status } = await apiGET({ action:'listrecipes' });
-      if (!json || !json.ok) {
+      try {
+        const { json, raw, status } = await apiGET({ action:'listrecipes' });
+        if (!json || !json.ok) throw new Error(`status ${status}: ${raw || ''}`);
         sel.innerHTML = '';
-        const opt = document.createElement('option');
-        opt.textContent = `Error loading recipes (${status})`;
-        sel.appendChild(opt);
-        showDebug('GET /listrecipes failed', raw || json);
-        return;
-      }
-      sel.innerHTML = '';
-      for (const r of json.data) {
-        const opt = document.createElement('option');
-        opt.value = r.id;
-        const lm = r.last_made ? new Date(r.last_made).toLocaleDateString() : 'never';
-        opt.textContent = `${r.name} (avg ~${r.time_min ?? '?'} min, last: ${lm})`;
-        sel.appendChild(opt);
-      }
-      if (!json.data.length) {
-        const opt = document.createElement('option');
-        opt.textContent = 'No active recipes found';
-        opt.disabled = true;
-        sel.appendChild(opt);
+        for (const r of json.data) {
+          const opt = document.createElement('option');
+          opt.value = r.id;
+          const lm = r.last_made ? new Date(r.last_made).toLocaleDateString() : 'never';
+          opt.textContent = `${r.name} (avg ~${r.time_min ?? '?'} min, last: ${lm})`;
+          sel.appendChild(opt);
+        }
+        if (!json.data.length) {
+          const opt = document.createElement('option');
+          opt.textContent = 'No active recipes found';
+          opt.disabled = true;
+          sel.appendChild(opt);
+        }
+      } catch (err) {
+        console.error(err);
+        sel.innerHTML = '<option>Error loading recipes</option>';
       }
     }
 
@@ -269,6 +301,9 @@
       const id = $('recipeSelect').value;
       const mins = $('cookMinutes').value.trim();
       const msg = $('quickMarkMsg');
+      // Disable Mark + Refresh while saving
+      const restoreMark = setLoading($('markBtn'), 'Saving…');
+      const restoreRefresh = (() => { const b=$('refreshBtn'); const d=b.disabled; b.disabled=true; return ()=>{ b.disabled=d; }; })();
       msg.textContent = 'Saving…';
       try {
         const resp = await apiPOST('markcooked', { recipeId:id, minutesOptional: mins });
@@ -279,6 +314,9 @@
       } catch (err) {
         msg.innerHTML = `<span class="error">Failed to save.</span>`;
         showDebug('POST /markcooked error', String(err));
+      } finally {
+        restoreMark();
+        restoreRefresh();
       }
     }
 
