@@ -1,0 +1,230 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Recipe Duel</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { width:100%; height:100%; max-width:100%; }
+    html { font-size: 16px; -webkit-text-size-adjust: 100%; }
+    @media (max-width: 480px){ html { font-size: 18px; } }
+
+    :root{
+      --radius: 14px; --pad: 16px;
+      --page-pad: clamp(16px, 4vw, 28px);
+      --sticky-h: 72px;
+    }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      margin: 0; padding: var(--page-pad);
+      padding-bottom: calc(var(--page-pad) + var(--sticky-h) + env(safe-area-inset-bottom,0px));
+      line-height: 1.4; background:#fafafa; color:#111; min-height:100dvh; overflow-x:hidden;
+    }
+    h1 { font-size: clamp(1.6rem,3vw,2rem); margin: 0 0 16px; }
+    h2 { font-size: clamp(1.2rem,2.4vw,1.4rem); margin: 18px 0 10px; }
+    .muted { color:#666; font-size:0.95rem; }
+    .container { width:min(100%, 1000px); margin:0 auto; }
+    .card { background:#fff; border:1px solid #e6e6e6; border-radius:var(--radius); padding:var(--pad); box-shadow:0 1px 2px rgba(0,0,0,.04); }
+    .grid { display:grid; gap:16px; grid-template-columns:1fr; }
+    @media (min-width:720px){ .grid { grid-template-columns:1fr 1fr; } }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; width:100%; }
+    button {
+      font-size:1rem; padding:12px 14px; border-radius:12px;
+      border:1px solid #d0d0d0; background:#fff; cursor:pointer; min-height:48px;
+    }
+    button:hover{ background:#f6f6f6; } button:active{ transform:translateY(1px); }
+    button.muted{ color:#444; border-color:#e4e4e4; background:#fbfbfb; }
+    input[type="number"], select{
+      font-size:1rem; padding:12px; border:1px solid #d0d0d0; border-radius:10px; min-height:48px; width:100%;
+    }
+    .mt-sm{ margin-top:12px; } .mt-md{ margin-top:20px; } .mt-lg{ margin-top:24px; }
+    .divider{ border:0; height:1px; background:#ececec; margin:22px 0; }
+    .actions{ margin-top:16px; } .actions .row{ gap:12px; }
+    @media (max-width:719.98px){ .actions{ display:none; } }
+    .sticky-actions{
+      position:fixed; left:0; right:0; bottom:0; height:var(--sticky-h);
+      padding:10px clamp(12px,4vw,28px); padding-bottom:calc(10px + env(safe-area-inset-bottom,0px));
+      background:rgba(255,255,255,0.94); backdrop-filter:blur(10px); border-top:1px solid #e6e6e6;
+      display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;
+    }
+    .sticky-actions button{ width:100%; }
+    @media (min-width:720px){ .sticky-actions{ display:none; } }
+
+    @media (prefers-color-scheme: dark){
+      body { background:#0f1115; color:#eaeaea; }
+      .card { background:#161a22; border-color:#242836; box-shadow:none; }
+      button { background:#1b1f2a; border-color:#2a2f3d; color:#eaeaea; }
+      button:hover { background:#222735; }
+      input[type="number"], select { background:#121622; border-color:#2a2f3d; color:#eaeaea; }
+      .divider { background:#232836; }
+      .sticky-actions { background:rgba(15,17,21,0.9); border-top-color:#242836; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>What’s better tonight?</h1>
+
+    <div id="duel" class="grid">
+      <div id="left" class="card"></div>
+      <div id="right" class="card"></div>
+    </div>
+
+    <hr class="divider" />
+
+    <h2>Quick mark cooked</h2>
+    <div class="card" style="max-width:680px; width:100%;">
+      <div class="row mt-sm">
+        <label for="recipeSelect" style="min-width: 90px;"><strong>Recipe:</strong></label>
+        <select id="recipeSelect"></select>
+      </div>
+
+      <div class="row mt-sm">
+        <label for="cookMinutes" style="min-width: 90px;"><strong>Time (min):</strong></label>
+        <input id="cookMinutes" type="number" inputmode="numeric" min="1" placeholder="optional" />
+        <span class="muted" style="width:100%;">Leave blank to keep existing time</span>
+      </div>
+
+      <div class="row mt-sm">
+        <button id="markBtn">Mark cooked today</button>
+        <button class="muted" id="refreshBtn">Refresh list</button>
+      </div>
+
+      <div id="quickMarkMsg" class="muted mt-sm"></div>
+    </div>
+
+    <div class="actions mt-md">
+      <div class="row">
+        <button id="skipBtn">Skip</button>
+        <button id="pairBtn">New Pair</button>
+        <button id="recsBtn">Show Weekly Picks</button>
+      </div>
+    </div>
+
+    <div id="recs" class="mt-lg"></div>
+  </div>
+
+  <div class="sticky-actions">
+    <button id="skipBtn2">Skip</button>
+    <button id="pairBtn2">New Pair</button>
+    <button id="recsBtn2">Weekly Picks</button>
+  </div>
+
+  <script>
+    // ====== CONFIG ======
+    const API_BASE = 'https://script.google.com/macros/s/AKfycbzHYjnsUhNN4HrlfvvUB8te9uyL2sC8WR8UDC_yRaqq_0KVInxvP9FnJ27O4BQHlBL9ig/exec'; // e.g. https://script.google.com/macros/s/AKfycb.../exec
+    const API_KEY = ''; // leave '' if you didn't set one
+
+    // Helpers
+    async function apiGET(pathParams) {
+      const url = `${API_BASE}?${new URLSearchParams(pathParams).toString()}${API_KEY ? `&key=${encodeURIComponent(API_KEY)}` : ''}`;
+      const res = await fetch(url, { method: 'GET' });
+      return res.json();
+    }
+    async function apiPOST(action, body) {
+      const url = `${API_BASE}?action=${encodeURIComponent(action)}${API_KEY ? `&key=${encodeURIComponent(API_KEY)}` : ''}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(API_KEY ? {'X-API-Key': API_KEY} : {}) },
+        body: JSON.stringify(body || {})
+      });
+      return res.json();
+    }
+
+    // UI State
+    let A=null, B=null;
+
+    // Render functions
+    function renderCard(slot, r){
+      document.getElementById(slot).innerHTML = `
+        <h2 style="margin:0 0 8px;">${r.name}</h2>
+        <div class="muted">Elo: ${r.elo} • Matches: ${r.matches} • ~${r.time_min||'?'} min</div>
+        <div class="row" style="margin-top:12px;">
+          <button onclick="vote('${r.id}')">Pick this</button>
+          <button class="muted" onclick="cooked('${r.id}')">Mark cooked</button>
+        </div>
+      `;
+    }
+
+    // Actions
+    async function loadPair(){
+      document.getElementById('left').innerHTML = 'Loading…';
+      document.getElementById('right').innerHTML = '';
+      const json = await apiGET({ action:'pair' });
+      if (!json.ok) { alert(json.error || 'Error'); return; }
+      A = json.data.a; B = json.data.b;
+      renderCard('left', A); renderCard('right', B);
+    }
+    async function vote(winnerId){
+      if (!A || !B) return;
+      const loserId = (A.id === winnerId) ? B.id : A.id;
+      const json = await apiPOST('vote', { winnerId, loserId });
+      if (!json.ok) { alert(json.error || 'Error'); return; }
+      loadPair();
+    }
+    async function cooked(id){
+      const json = await apiPOST('markcooked', { recipeId:id });
+      if (!json.ok) { alert(json.error || 'Error'); return; }
+      alert('Marked cooked!');
+    }
+    async function loadRecs(){
+      const recsDiv = document.getElementById('recs');
+      recsDiv.innerHTML = 'Scoring…';
+      const json = await apiGET({ action:'recs', limit:10 });
+      if (!json.ok) { recsDiv.textContent = json.error || 'Error'; return; }
+      const html = ['<h2>Weekly Picks</h2><ol>'].concat(
+        json.data.map(r => `<li>${r.name} — score ${r.score} (Elo ${r.elo}, ~${r.time_min} min${r.last_made?`, last made: ${new Date(r.last_made).toLocaleDateString()}`:''})</li>`)
+      ).concat(['</ol>']).join('');
+      recsDiv.innerHTML = html;
+    }
+    async function refreshQuickMark(){
+      const sel = document.getElementById('recipeSelect');
+      sel.innerHTML = '<option>Loading…</option>';
+      const json = await apiGET({ action:'listrecipes' });
+      if (!json.ok) { sel.innerHTML = '<option>Error</option>'; return; }
+      sel.innerHTML = '';
+      for (const r of json.data) {
+        const opt = document.createElement('option');
+        opt.value = r.id;
+        const lm = r.last_made ? new Date(r.last_made).toLocaleDateString() : 'never';
+        opt.textContent = `${r.name} (avg ~${r.time_min ?? '?'} min, last: ${lm})`;
+        sel.appendChild(opt);
+      }
+      if (!json.data.length) {
+        const opt = document.createElement('option');
+        opt.textContent = 'No active recipes found';
+        opt.disabled = true;
+        sel.appendChild(opt);
+      }
+    }
+    async function quickMarkCooked(){
+      const id = document.getElementById('recipeSelect').value;
+      const mins = document.getElementById('cookMinutes').value.trim();
+      const msg = document.getElementById('quickMarkMsg');
+      msg.textContent = 'Saving…';
+      const json = await apiPOST('markcooked', { recipeId:id, minutesOptional: mins });
+      if (!json.ok) { msg.textContent = json.error || 'Error'; return; }
+      msg.textContent = `Saved: ${json.data.name} marked cooked today${mins ? `; time set to ${json.data.time_min} min` : ''}.`;
+      document.getElementById('cookMinutes').value = '';
+      refreshQuickMark();
+    }
+
+    // Wire buttons
+    const $ = (id) => document.getElementById(id);
+    window.addEventListener('DOMContentLoaded', () => {
+      $('pairBtn').onclick = loadPair;
+      $('pairBtn2').onclick = loadPair;
+      $('skipBtn').onclick = loadPair;
+      $('skipBtn2').onclick = loadPair;
+      $('recsBtn').onclick = loadRecs;
+      $('recsBtn2').onclick = loadRecs;
+      $('refreshBtn').onclick = refreshQuickMark;
+      $('markBtn').onclick = quickMarkCooked;
+
+      loadPair();
+      refreshQuickMark();
+    });
+  </script>
+</body>
+</html>
